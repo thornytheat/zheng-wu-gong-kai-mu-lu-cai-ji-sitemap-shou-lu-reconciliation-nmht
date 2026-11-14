@@ -1,0 +1,11 @@
+:root { color-scheme: light; }
+body { font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #1f2430; }
+header { background: #fff; border-bottom: 1px solid #e3e6eb; padding: 12px 24px; }
+main { max-width: 900px; margin: 24px auto; background: #fff; border: 1px solid #e3e6eb; border-radius: 10px; padding: 20px 24px; }
+h1 { font-size: 20px; }
+.muted { color: #6b7280; }
+.small { font-size: 12.5px; }
+ul.list { padding-left: 18px; }
+ul.list li { margin: 6px 0; }
+nav.pager { margin-top: 16px; padding-top: 12px; border-top: 1px dashed #e3e6eb; }
+nav.pager a { margin-right: 8px; color: #1f6feb; }

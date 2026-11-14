@@ -1,0 +1,33 @@
+name: crawlscope
+
+services:
+  app:
+    build: .
+    container_name: crawlscope-app
+    environment:
+      APP_PORT: "18210"
+      DATA_DIR: /app/data
+      SAMPLE_SITE_URL: ${SAMPLE_SITE_URL:-http://sample-site}
+      FETCH_TIMEOUT: "5"
+    ports:
+      - "${APP_PORT:-18210}:8000"
+    depends_on:
+      - sample-site
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - crawlscope-data:/app/data
+
+  sample-site:
+    image: nginx:1.27-alpine
+    container_name: crawlscope-sample-site
+    ports:
+      - "${SAMPLE_PORT:-19210}:80"
+    volumes:
+      - ./sample_site:/usr/share/nginx/html:ro
+
+volumes:
+  crawlscope-data:

@@ -1,0 +1,19 @@
+{
+  "seed_version": "1",
+  "sites": [
+    {
+      "name": "样例政务站（compose 内网）",
+      "base_url": "http://sample-site",
+      "max_pages": 10,
+      "policy": "tolerant",
+      "note": "6 页目录：第 3 页为第 2 页重复副本，第 5 页含外站与 404 链接，第 6 页为空页"
+    },
+    {
+      "name": "样例站（严格模式对照）",
+      "base_url": "http://sample-site",
+      "max_pages": 10,
+      "policy": "strict",
+      "note": "用于复核重复页终止：停在第 3 页"
+    }
+  ]
+}

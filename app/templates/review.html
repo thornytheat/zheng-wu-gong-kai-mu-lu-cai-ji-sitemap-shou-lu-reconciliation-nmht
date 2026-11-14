@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}复核与导出 · {{ app_name }}{% endblock %}
+{% block crumb %}复核与导出{% endblock %}
+{% block meta %}<span class="dot {% if totals.scans %}ok{% else %}warn{% endif %}"></span>扫描 {{ totals.scans }} 条 · 差异 {{ totals.diff }} 条 · 失败 {{ totals.failures }} 条{% endblock %}
+{% block actions %}
+<a class="btn secondary small" href="/workbench">回工作台</a>
+<a class="btn small" href="/workbench">执行采集</a>
+{% endblock %}
+{% block status_left %}差异合计 = 未收录 + sitemap 多出 + lastmod 不一致；失败合计 = 4xx/5xx/超时/外站/重复页{% endblock %}
+{% block status_right %}{{ app_name }} · 历史扫描 {{ totals.scans }} 条{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">复核与导出</h1>
+    <p class="page-sub">每次真实采集都在这里留一行（同一组合重跑就地更新、run_count 递增）。按目标站/策略筛选后可导出列表，或下载单次扫描的差异 CSV 交给运维排期修。</p>
+  </div>
+</div>
+
+<section class="panel">
+  <div class="toolbar">
+    <input type="search" id="review-search" placeholder="搜索扫描ID / 目标站 / 终止原因" aria-label="搜索扫描记录" style="min-width:260px">
+    <select id="review-policy" aria-label="按策略筛选">
+      <option value="">全部策略</option>
+      <option value="strict">严格：遇重复页立即停止</option>
+      <option value="tolerant">完整核对（记录重复页后继续）</option>
+    </select>
+    <select id="review-has-diff" aria-label="按差异筛选">
+      <option value="">全部扫描</option>
+      <option value="1">有差异</option>
+      <option value="0">无差异</option>
+    </select>
+    <span class="spacer"></span>
+    <span class="small muted" id="review-stat">共 {{ scans|length }} 条扫描</span>
+    <button type="button" class="btn secondary small" data-export-csv="scan-table">导出 CSV</button>
+  </div>
+  <div class="table-wrap roomy">
+    <table class="dense" id="scan-table">
+      <thead>
+        <tr>
+          <th>扫描</th><th>目标站</th><th class="num">页数</th><th>终止</th><th class="num">目录</th>
+          <th class="num">未收录</th><th class="num">多出</th><th class="num">日期不一致</th><th class="num">失败</th><th>更新时间</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in scans %}
+        <tr data-key="{{ row.scan_key }}" data-policy="{{ row.policy }}" data-diff="{{ 1 if row.only_catalog_count + row.only_sitemap_count + row.mismatch_count else 0 }}">
+          <td><a href="/result/{{ row.scan_key }}"><code>{{ row.scan_key }}</code></a>
+            <div class="small muted">{% if row.policy == 'strict' %}严格{% else %}完整核对{% endif %}
+              {% if row.run_count > 1 %} · 跑过 {{ row.run_count }} 次{% endif %}</div>
+          </td>
+          <td class="small">{{ row.target }}</td>
+          <td class="num">{{ row.pages_fetched }}</td>
+          <td class="small">第 {{ row.stop_page }} 页 · {{ row.stop_reason }}</td>
+          <td class="num">{{ row.catalog_count }}</td>
+          <td class="num">{{ row.only_catalog_count }}</td>
+          <td class="num">{{ row.only_sitemap_count }}</td>
+          <td class="num">{{ row.mismatch_count }}</td>
+          <td class="num">{{ row.failure_count }}</td>
+          <td class="small muted nowrap">{{ row.updated_at }}</td>
+          <td class="small nowrap">
+            <a href="/result/{{ row.scan_key }}">看结果</a> ·
+            <a href="/review/{{ row.scan_key }}/diff.csv">下载 CSV</a>
+          </td>
+        </tr>
+      {% else %}
+        <tr data-placeholder="1"><td colspan="11" class="muted">还没有扫描记录。先到 <a href="/workbench">采集工作台</a> 执行一次采集。</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="panel-actions">
+    <span class="small muted" style="align-self:center">共 {{ totals.scans }} 条扫描 · 差异 {{ totals.diff }} 条 · 失败 {{ totals.failures }} 条</span>
+    <span class="small muted" style="align-self:center">旧记录保留可查：同组合重跑只更新计数（run_count 递增），不新增行。</span>
+  </div>
+</section>
+
+<div class="split result">
+  <div>
+    <section class="panel" id="m5">
+      <div class="panel-head">
+        <h2>sitemap 对账口径</h2>
+        <div class="panel-actions"><span class="tag">复核说明</span></div>
+      </div>
+      <div class="panel-body tight">
+        <ul class="list small" style="margin-top:0">
+          <li><strong>结论怎么读</strong>：先看「结论」徽标。只要存在「目录有、sitemap 缺」或 lastmod 不一致，就判为存在收录缺口，需要运维在 sitemap 生成侧补条。</li>
+          <li><strong>三类差异</strong>：only_in_catalog = 目录里抓到但 sitemap 没有；only_in_sitemap = sitemap 有但目录 6 页里没有（可能是已下架或列表漏挂）；lastmod_mismatch = 两处日期不同。</li>
+          <li><strong>失败分类</strong>：4xx 通常是详情页已删除但列表还挂着；外站链接应从列表模板里去掉；重复页说明站点分页配置循环，需要编辑核对分页模板。</li>
+          <li><strong>幂等</strong>：同一目标站 + 最大页数 + 策略重复执行时按 scan_key 就地更新，run_count 递增，不会产生重复扫描行。</li>
+          <li><strong>CSV</strong>：含三类差异 + 全部失败条目，UTF-8 BOM，Excel 可直接打开。</li>
+        </ul>
+      </div>
+      <div class="panel-actions">
+        <a class="btn small" href="/workbench">去执行采集</a>
+      </div>
+    </section>
+
+    <section class="panel" id="m6">
+      <div class="panel-head">
+        <h2>差异导出</h2>
+        <div class="panel-actions"><span class="tag">CSV · UTF-8 BOM</span></div>
+      </div>
+      <div class="panel-body tight">
+        {% if latest_scan %}
+        <p class="small" style="margin-top:0">
+          最近一次扫描 <code>{{ latest_scan.scan_id }}</code>（{{ latest_scan.target }}）的差异清单：
+        </p>
+        <p style="margin-bottom:6px">
+          <a class="btn small" href="/review/{{ latest_scan.scan_id }}/diff.csv">下载最新差异 CSV</a>
+        </p>
+        <p class="small muted" style="margin-bottom:0">
+          单次扫描导出：上表每行的「下载 CSV」按钮。CSV 含 only_in_catalog / only_in_sitemap / lastmod_mismatch
+          三类差异与全部失败条目（含示例 URL），可直接交给 sitemap 生成侧或运维排期修复。
+        </p>
+        {% else %}
+        <div class="empty">
+          <strong>还没有可导出的扫描</strong>
+          先执行一次采集，这里会给出最新扫描的差异 CSV 下载入口。
+        </div>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <div>
+    <section class="panel pane-sticky">
+      <div class="panel-head">
+        <h2>最近一次扫描详情</h2>
+        <div class="panel-actions">
+          {% if latest_scan %}
+          <span class="tag {% if latest_scan.diff.counts.only_in_catalog or latest_scan.diff.counts.lastmod_mismatch %}err{% else %}ok{% endif %}">{{ latest_scan.diff.verdict }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="panel-body tight">
+        {% if latest_scan %}
+        <div class="table-wrap auto">
+          <table class="dense">
+            <tbody>
+              <tr><th style="width:110px">扫描</th><td><code>{{ latest_scan.scan_id }}</code></td></tr>
+              <tr><th>目标站</th><td class="small">{{ latest_scan.target }}</td></tr>
+              <tr><th>策略 / 页数</th><td>{% if latest_scan.policy == 'strict' %}严格{% else %}完整核对{% endif %} · 抓取 {{ latest_scan.pagination.pages_fetched }} 页</td></tr>
+              <tr><th>终止</th><td class="small">第 {{ latest_scan.pagination.stop_page }} 页 · {{ latest_scan.pagination.reason }}</td></tr>
+              <tr><th>目录 / sitemap</th><td>{{ latest_scan.catalog.count }} / {{ latest_scan.sitemap.count }} 条</td></tr>
+              <tr><th>未收录</th><td>{{ latest_scan.diff.counts.only_in_catalog }} 条</td></tr>
+              <tr><th>sitemap 多出</th><td>{{ latest_scan.diff.counts.only_in_sitemap }} 条</td></tr>
+              <tr><th>lastmod 不一致</th><td>{{ latest_scan.diff.counts.lastmod_mismatch }} 条</td></tr>
+              <tr><th>失败合计</th><td>{{ latest_scan.failures.counts.values() | sum }} 条</td></tr>
+              <tr><th>生成时间</th><td class="small muted">{{ latest_scan.generated_at }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small" style="margin-bottom:0">
+          <a class="btn secondary small" href="/result/{{ latest_scan.scan_id }}">打开结果页（看全部依据）</a>
+        </p>
+        {% else %}
+        <div class="empty">
+          <strong>还没有扫描记录</strong>
+          执行一次采集后，这里给出最新一次扫描的终止原因与三类差异计数。
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <details class="help" style="margin-top:12px">
+      <summary>API 快速自测（curl）</summary>
+      <pre style="margin:6px 0 0">curl -s -X POST http://127.0.0.1:18210/api/scan \
+  -H 'Content-Type: application/json' -d '{"target":"http://sample-site","max_pages":10}'
+curl -s http://127.0.0.1:18210/api/scan/&lt;scan_id&gt;
+curl -s http://127.0.0.1:18210/health</pre>
+    </details>
+  </div>
+</div>
+{% endblock %}

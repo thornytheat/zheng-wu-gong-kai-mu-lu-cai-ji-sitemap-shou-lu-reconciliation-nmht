@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}总览 · {{ app_name }}{% endblock %}
+{% block crumb %}总览{% endblock %}
+{% block meta %}<span class="dot ok"></span>服务正常 · 扫描 {{ stats.scan_total }} 次 · 样例站 6 页目录{% endblock %}
+{% block actions %}
+<a class="btn secondary small" href="/review">复核与导出</a>
+<a class="btn small" href="/workbench">去工作台</a>
+{% endblock %}
+{% block status_left %}扫描 {{ stats.scan_total }} 次 · 目录 {{ stats.catalog_count }} 条 · 差异 {{ stats.diff_total }} 条 · 失败 {{ stats.failure_total }} 条{% endblock %}
+{% block status_right %}{{ app_name }} · {{ default_target }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">总览</h1>
+    <p class="page-sub">
+      政务公开目录采集与 sitemap 收录对账：一条命令抓完信息公开目录的列表页，再和站点 sitemap 对账，
+      最后把三类差异导出给运维在 sitemap 生成侧修。当前样例站 6 页目录、25 条条目。
+    </p>
+  </div>
+</div>
+
+<div class="kpi-strip">
+  <div class="kpi">
+    <div class="k-label">扫描记录</div>
+    <div class="k-value">{{ stats.scan_total }}</div>
+    <div class="k-note">同组合重跑就地更新</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">已采集页数</div>
+    <div class="k-value">{{ stats.pages_fetched }}</div>
+    <div class="k-note">{% if stats.latest_key %}最近扫描 <code>{{ stats.latest_key }}</code>{% else %}还没有扫描{% endif %}</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">目录条数</div>
+    <div class="k-value">{{ stats.catalog_count }}</div>
+    <div class="k-note">同站去重后的目录条目</div>
+  </div>
+  <div class="kpi {% if stats.diff_total %}err{% else %}ok{% endif %}">
+    <div class="k-label">差异合计</div>
+    <div class="k-value">{{ stats.diff_total }}</div>
+    <div class="k-note">未收录 + 多出 + 日期不一致</div>
+  </div>
+  <div class="kpi {% if stats.failure_total %}warn{% else %}ok{% endif %}">
+    <div class="k-label">失败合计</div>
+    <div class="k-value">{{ stats.failure_total }}</div>
+    <div class="k-note">4xx / 5xx / 超时 / 外站 / 重复页</div>
+  </div>
+</div>
+
+<div class="split wide-left">
+  <div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>快捷操作</h2>
+        <div class="panel-actions"><span class="tag">3 步主流程</span></div>
+      </div>
+      <div class="panel-body tight">
+        <p style="margin-top:2px">
+          <a class="btn small" href="/workbench">执行采集（进工作台）</a>
+        </p>
+        <p>
+          <a class="btn secondary small" href="/review">看历史扫描与导出</a>
+        </p>
+        <ol class="list small" style="margin-bottom:0">
+          <li>工作台填目标站 <code>{{ default_target }}</code>、最大页数 10，点「执行采集」。</li>
+          <li>结果页看终止原因、三类差异与失败分类，再下载差异 CSV。</li>
+          <li>复核页按目标站/策略筛选历史扫描，逐条回看依据。</li>
+        </ol>
+      </div>
+      <div class="panel-actions">
+        <a class="btn small" href="/workbench">打开采集工作台</a>
+        <a class="btn secondary small" href="/review">复核与导出</a>
+      </div>
+    </section>
+
+    <details class="help" style="margin-top:12px">
+      <summary>业务背景、6 个业务模块与完整演示步骤</summary>
+      <p class="small" style="margin-top:6px">
+        <strong>谁在用</strong>：市政府网站编辑部数据组。每天上班要先回答两个问题：
+        「信息公开目录里每一条都进站点 sitemap 了吗」「列表分页到底抓全了没有」。
+        过去靠人工翻页 + 复制粘贴比对，重复页、分页中断和 sitemap 漏收经常被漏掉。
+      </p>
+      <h3>6 个业务模块与落点</h3>
+      <ul class="list small">
+        <li><strong>站点配置</strong>：seed 自 <code>sample_data/site_profiles.json</code>，工作台左侧可选中回填参数（锚点 1）。</li>
+        <li><strong>采集执行</strong>：从列表第 1 页顺序抓取，带超时与重试 1 次，只保留同站链接（锚点 2）。</li>
+        <li><strong>分页诊断</strong>：给出终止原因、停在第几页，以及每页的条目数 / 新增数 / 是否重复页（锚点 3）。</li>
+        <li><strong>URL 规范化</strong>：去 fragment、去 utm/spm/from、query 排序、去默认端口、去尾部斜杠，保留已有百分号编码（锚点 4）。</li>
+        <li><strong>sitemap 对账</strong>：目录集合 vs sitemap 集合 → 未收录 / 多出 / lastmod 不一致三类差异（锚点 5）。</li>
+        <li><strong>差异导出</strong>：差异清单导出 CSV，交给运维在 sitemap 生成侧修；失败分类单独计数（锚点 6）。</li>
+      </ul>
+      <h3>演示步骤（样例站已内置 6 页目录）</h3>
+      <ol class="list small">
+        <li>首页点「执行采集（进工作台）」，目标站保持 <code>http://sample-site</code>，最大页数 10。</li>
+        <li>默认「完整核对」策略会抓完 6 页，并在第 3 页标注「重复页」（该页站内 URL 集合与第 2 页完全相同），第 6 页空页终止。</li>
+        <li>结果页看终止原因、三类差异与失败分类：目录里 3 条没进 sitemap、sitemap 多出 2 条、1 条 lastmod 不一致、3 条外站、1 条 404。</li>
+        <li>想验证严格边界，把策略改成「严格：遇重复页立即停止」再跑：终止原因=重复页、停在第 3 页、只抓 3 页。</li>
+        <li>到「复核与导出」下载差异 CSV，或核对历史扫描。</li>
+      </ol>
+      <p class="small muted" style="margin-bottom:0">
+        同一目标站 + 最大页数 + 策略重复执行时，记录会就地更新（<code>run_count</code> 递增），不会产生重复行。
+      </p>
+    </details>
+  </div>
+
+  <div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>最近扫描</h2>
+        <div class="panel-actions">
+          <span class="tag">{{ stats.scan_total }} 次</span>
+          <a class="btn secondary small" href="/review">全部</a>
+        </div>
+      </div>
+      <div class="table-wrap roomy">
+        <table class="dense">
+          <thead>
+            <tr>
+              <th>扫描</th><th class="num">页数</th><th>终止</th>
+              <th class="num">目录</th><th class="num">差异</th><th class="num">失败</th><th>更新时间</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for row in recent %}
+            <tr>
+              <td><a href="/result/{{ row.scan_key }}"><code>{{ row.scan_key }}</code></a>
+                <div class="small muted">{{ row.target }} · {% if row.policy == 'strict' %}严格{% else %}完整核对{% endif %}{% if row.run_count > 1 %} · 跑过 {{ row.run_count }} 次{% endif %}</div>
+              </td>
+              <td class="num">{{ row.pages_fetched }}</td>
+              <td class="small">第 {{ row.stop_page }} 页 · {{ row.stop_reason }}</td>
+              <td class="num">{{ row.catalog_count }}</td>
+              <td class="num">{{ row.only_catalog_count + row.only_sitemap_count + row.mismatch_count }}</td>
+              <td class="num">{{ row.failure_count }}</td>
+              <td class="small muted nowrap">{{ row.updated_at }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="muted">还没有扫描记录。到 <a href="/workbench">采集工作台</a> 执行一次采集。</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-actions">
+        <span class="small muted" style="align-self:center">差异 = 未收录 + sitemap 多出 + lastmod 不一致；失败 = 4xx/5xx/超时/外站/重复页合计。</span>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

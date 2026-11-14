@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}采集工作台 · {{ app_name }}{% endblock %}
+{% block crumb %}采集工作台{% endblock %}
+{% block meta %}<span class="dot {% if latest_scan and latest_scan.diff.counts.only_in_catalog %}warn{% else %}ok{% endif %}"></span>
+{% if latest_scan %}最近扫描 <code>{{ latest_scan.scan_id }}</code> · 第 {{ latest_scan.pagination.stop_page }} 页终止{% else %}还没有扫描记录{% endif %}{% endblock %}
+{% block actions %}
+<button type="submit" form="scan-form" class="btn small" id="scan-submit-top">执行采集</button>
+<a class="btn secondary small" href="/review">复核与导出</a>
+{% endblock %}
+{% block status_left %}超时 5 秒 · 失败重试 1 次 · 只保留同站链接 · 结果写入 SQLite（同组合重跑就地更新）{% endblock %}
+{% block status_right %}{{ app_name }} · 样例站 <code>{{ default_target }}</code>{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">采集工作台</h1>
+    <p class="page-sub">选站点 → 填目标站与最大页数 → 执行采集：左侧参数固定可见，右侧立即给出指标、扫描历史与分页诊断。</p>
+  </div>
+</div>
+
+<div class="split">
+  <section class="panel pane-sticky" id="m1">
+    <div class="panel-head">
+      <h2>采集任务输入</h2>
+      <div class="panel-actions"><span class="tag">站点配置</span></div>
+    </div>
+    <div class="panel-body">
+      <form id="scan-form">
+        <div class="field">
+          <label for="site-select">已保存站点（seed 自 sample_data/site_profiles.json）</label>
+          <select id="site-select">
+            <option value="">— 手动填写 —</option>
+            {% for site in sites %}
+            <option value="{{ site.base_url }}" data-max-pages="{{ site.max_pages }}" data-policy="{{ site.policy }}">
+              {{ site.name }}（{{ site.base_url }}）
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="target">目标站入口 URL</label>
+          <input type="text" id="target" name="target" value="{{ request.query_params.get('target') or default_target }}" required>
+        </div>
+        <div class="field">
+          <label for="max_pages">最大页数（1-30）</label>
+          <input type="number" id="max_pages" name="max_pages" min="1" max="30"
+                 value="{{ request.query_params.get('max_pages') or default_max_pages }}" required>
+        </div>
+        <div class="field">
+          <label for="policy">重复页策略</label>
+          <select id="policy" name="policy">
+            {% for key, label in policies.items() %}
+            <option value="{{ key }}" {% if request.query_params.get('policy') == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <p class="small muted" style="margin-bottom:0">
+          当前样例站 <code>{{ default_target }}</code>（compose 内网地址，禁止用宿主机 localhost 互访；<code>/sitemap.xml</code> 由同一 host 提供）。
+        </p>
+      </form>
+
+      <div id="scan-error" class="alert alert-error" hidden></div>
+      <div id="scan-progress" class="small muted" hidden>
+        <p id="scan-progress-text">准备提交…</p>
+        <ol class="list small" id="scan-progress-steps">
+          <li data-step="submit">提交参数校验</li>
+          <li data-step="crawl">顺序抓取列表页（同站过滤 + 分页边界判定）</li>
+          <li data-step="detail">校验目录详情 URL（4xx/5xx/超时分类）</li>
+          <li data-step="sitemap">抓取 sitemap.xml 并解析</li>
+          <li data-step="reconcile">对账并落库</li>
+        </ol>
+      </div>
+      <div id="scan-summary" hidden>
+        <h3>即时摘要</h3>
+        <p id="scan-conclusion" class="small"></p>
+        <p style="margin-bottom:0"><a class="btn small" id="scan-result-link" href="#">查看结果页（依据与差异）</a></p>
+      </div>
+
+      <details class="help" style="margin-top:10px">
+        <summary>分页诊断口径</summary>
+        <ul class="list small" style="margin-bottom:0">
+          <li>从第 1 页顺序抓取，页码由页内分页条（<code>a[data-page]</code>）确定，不猜 URL。</li>
+          <li>终止条件：本页提取条目为 0（空页）→ 本页同站 URL 集合与上一页完全相同（重复页）→ 连续 2 页无新增 URL。</li>
+          <li>严格模式命中重复页立即停止；容忍模式记录重复页后继续，用来核对站点尾部是否还有有效页。</li>
+          <li>结果页会写明终止原因、停在第几页、抓取页数，以及每页条目数 / 新增数。</li>
+        </ul>
+      </details>
+    </div>
+    <div class="panel-actions" id="m2">
+      <button type="submit" form="scan-form" id="scan-submit">执行采集</button>
+      <button type="reset" form="scan-form" class="secondary">重置参数</button>
+    </div>
+  </section>
+
+  <div>
+    <div class="kpi-strip" id="scan-metrics">
+      <div class="kpi">
+        <div class="k-label">抓取页数</div>
+        <div class="k-value">{{ latest_scan.pagination.pages_fetched if latest_scan else '—' }}</div>
+        <div class="k-note">顺序抓取，遇终止条件即停</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">终止页</div>
+        <div class="k-value">{% if latest_scan %}第 {{ latest_scan.pagination.stop_page }} 页{% else %}—{% endif %}</div>
+        <div class="k-note">{% if latest_scan %}{{ latest_scan.pagination.reason }}{% else %}等待第一次采集{% endif %}</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">目录条目</div>
+        <div class="k-value">{{ latest_scan.catalog.count if latest_scan else '—' }}</div>
+        <div class="k-note">同站去重后的目录条目</div>
+      </div>
+      <div class="kpi {% if latest_scan and latest_scan.diff.counts.only_in_catalog %}err{% endif %}">
+        <div class="k-label">未收录</div>
+        <div class="k-value">{{ latest_scan.diff.counts.only_in_catalog if latest_scan else '—' }}</div>
+        <div class="k-note">目录有、sitemap 缺</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">失败合计</div>
+        <div class="k-value">{% if latest_scan %}{{ latest_scan.failures.counts.values() | sum }}{% else %}—{% endif %}</div>
+        <div class="k-note">4xx/5xx/超时/外站/重复页</div>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>扫描历史</h2>
+        <div class="panel-actions">
+          <span class="tag">{{ recent|length }} 条</span>
+          <a class="btn secondary small" href="/review">复核与导出</a>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="dense">
+          <thead>
+            <tr><th>扫描</th><th class="num">页数</th><th>终止</th><th class="num">目录</th>
+              <th class="num">未收录</th><th class="num">多出</th><th class="num">日期不一致</th><th class="num">失败</th></tr>
+          </thead>
+          <tbody>
+          {% for row in recent %}
+            <tr>
+              <td><a href="/result/{{ row.scan_key }}"><code>{{ row.scan_key }}</code></a>
+                <div class="small muted">{{ row.target }} · {% if row.policy == 'strict' %}严格{% else %}完整核对{% endif %}</div>
+              </td>
+              <td class="num">{{ row.pages_fetched }}</td>
+              <td class="small">第 {{ row.stop_page }} 页 · {{ row.stop_reason }}</td>
+              <td class="num">{{ row.catalog_count }}</td>
+              <td class="num">{{ row.only_catalog_count }}</td>
+              <td class="num">{{ row.only_sitemap_count }}</td>
+              <td class="num">{{ row.mismatch_count }}</td>
+              <td class="num">{{ row.failure_count }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="8" class="muted">还没有扫描记录。填好左侧参数，点「执行采集」。</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" id="m3">
+      <div class="panel-head">
+        <h2>分页诊断</h2>
+        <div class="panel-actions">
+          {% if latest_scan %}
+          <span class="tag warn">第 {{ latest_scan.pagination.stop_page }} 页终止</span>
+          <a class="btn secondary small" href="/result/{{ latest_scan.scan_id }}">看完整依据</a>
+          {% endif %}
+        </div>
+      </div>
+      {% if latest_scan and latest_scan.pagination.pages %}
+      <div class="table-wrap">
+        <table class="dense">
+          <thead><tr><th class="num">页序</th><th>列表页 URL</th><th class="num">HTTP</th><th class="num">同站条目</th><th class="num">新增</th><th>判定</th></tr></thead>
+          <tbody>
+          {% for page in latest_scan.pagination.pages %}
+            <tr>
+              <td class="num">{{ page.index }}</td>
+              <td class="small cell-ellipsis">{{ page.url }}</td>
+              <td class="num">{{ page.status }}</td>
+              <td class="num">{{ page.entries }}</td>
+              <td class="num">{{ page.new }}</td>
+              <td>
+                {% if page.duplicate %}<span class="tag warn">重复页</span>
+                {% elif page.entries == 0 %}<span class="tag err">空页</span>
+                {% elif page.index == latest_scan.pagination.stop_page %}<span class="tag warn">终止页</span>
+                {% else %}<span class="tag ok">正常</span>{% endif %}
+                {% if page.note %}<div class="small muted">{{ page.note }}</div>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-body tight">
+        <p class="small muted" style="margin:0">
+          <strong>终止原因：</strong>{{ latest_scan.pagination.reason }}；<strong>停在第 {{ latest_scan.pagination.stop_page }} 页</strong>，
+          共抓取 {{ latest_scan.pagination.pages_fetched }} 页。
+          {% if latest_scan.policy == 'strict' %}严格模式命中重复页即停，因此后续页未抓取；改用「完整核对」可继续抓完并看到空页终止。{% endif %}
+        </p>
+      </div>
+      {% else %}
+      <div class="empty">
+        <strong>还没有分页诊断数据</strong>
+        执行一次采集后，这里给出每页条目数、新增数与终止判定。
+      </div>
+      {% endif %}
+    </section>
+
+    <section class="panel" id="m4">
+      <div class="panel-head">
+        <h2>URL 规范化核对</h2>
+        <div class="panel-actions"><span class="tag">工具</span></div>
+      </div>
+      <div class="panel-body tight">
+        <form id="normalize-form" class="form-inline">
+          <div class="field">
+            <label for="raw-url">待规范化链接</label>
+            <input type="text" id="raw-url" name="url" value="./detail-12.html?utm_source=wechat&amp;spm=abc#top">
+          </div>
+          <div class="field">
+            <label for="base-url">所在页面 URL（相对链接按它解析）</label>
+            <input type="text" id="base-url" name="base" value="{{ default_target }}/list/page-2.html">
+          </div>
+          <div class="field" style="grid-column:1/-1;margin-bottom:0">
+            <button type="submit" class="secondary">规范化</button>
+            <span class="small muted">去 fragment、去 utm/spm/from、query 排序、去默认端口、去尾部斜杠。</span>
+          </div>
+        </form>
+        <div id="normalize-error" class="alert alert-error" hidden></div>
+        <div id="normalize-output" hidden>
+          <p class="small" style="margin:6px 0 0">规范化结果：<code id="normalize-result"></code></p>
+          <p class="small muted" id="normalize-changes" style="margin:0"></p>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

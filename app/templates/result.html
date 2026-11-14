@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block title %}扫描结果 · {{ scan.target }}{% endblock %}
+{% block crumb %}扫描结果{% endblock %}
+{% block meta %}<span class="dot {% if scan.diff.counts.only_in_catalog or scan.diff.counts.lastmod_mismatch %}warn{% else %}ok{% endif %}"></span>
+{{ scan.diff.verdict }} · 目录 {{ scan.catalog.count }} 条 · sitemap {{ scan.sitemap.count }} 条{% endblock %}
+{% block actions %}
+<a class="btn small" href="{{ csv_url }}">下载差异 CSV</a>
+<a class="btn secondary small" href="/workbench?target={{ scan.target }}&amp;max_pages={{ scan.max_pages }}&amp;policy={% if scan.policy == 'strict' %}tolerant{% else %}strict{% endif %}">
+  用{% if scan.policy == 'strict' %}容忍{% else %}严格{% endif %}策略重跑
+</a>
+<a class="btn secondary small" href="/workbench">回工作台</a>
+{% endblock %}
+{% block status_left %}目标站 <code>{{ scan.target }}</code> · 最大页数 {{ scan.max_pages }} ·
+{% if scan.policy == 'strict' %}严格{% else %}完整核对{% endif %} · 生成于 {{ scan.generated_at }}
+{% if scan.run_count and scan.run_count > 1 %}· 已重跑 {{ scan.run_count }} 次（同一扫描幂等更新）{% endif %}{% endblock %}
+{% block status_right %}scan_id <code>{{ scan.scan_id }}</code>{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 class="page-title">扫描结果 · {{ scan.scan_id }}</h1>
+    <p class="page-sub">
+      <strong>结论：</strong><span class="tag {% if scan.diff.counts.only_in_catalog or scan.diff.counts.lastmod_mismatch %}err{% else %}ok{% endif %}">{{ scan.diff.verdict }}</span>
+      {{ scan.diff.conclusion }}
+      <br>目标站 <code>{{ scan.target }}</code> · 最大页数 {{ scan.max_pages }} ·
+      {% if scan.policy == 'strict' %}严格{% else %}完整核对{% endif %} · 生成于 {{ scan.generated_at }}
+    </p>
+  </div>
+  <div class="page-head-actions">
+    <a class="btn secondary small" href="/review?scan={{ scan.scan_id }}">复核与导出</a>
+  </div>
+</div>
+
+{% if not scan.sitemap.available %}
+<div class="alert alert-error">sitemap 不可用：{{ scan.sitemap.error }}（本次只完成了目录采集与分页诊断）</div>
+{% endif %}
+
+<div class="kpi-strip">
+  <div class="kpi">
+    <div class="k-label">目录条目</div>
+    <div class="k-value">{{ scan.catalog.count }}</div>
+    <div class="k-note">同站去重后的目录条目</div>
+  </div>
+  <div class="kpi">
+    <div class="k-label">sitemap 条目</div>
+    <div class="k-value">{{ scan.sitemap.count }}</div>
+    <div class="k-note">{% if scan.sitemap.available %}已解析 urlset{% else %}不可用{% endif %}</div>
+  </div>
+  <div class="kpi {% if scan.diff.counts.only_in_catalog %}err{% else %}ok{% endif %}">
+    <div class="k-label">目录有、sitemap 缺</div>
+    <div class="k-value">{{ scan.diff.counts.only_in_catalog }}</div>
+    <div class="k-note">未收录，需在 sitemap 侧补条</div>
+  </div>
+  <div class="kpi {% if scan.diff.counts.only_in_sitemap %}warn{% endif %}">
+    <div class="k-label">sitemap 多出</div>
+    <div class="k-value">{{ scan.diff.counts.only_in_sitemap }}</div>
+    <div class="k-note">目录里没有，可能已下架</div>
+  </div>
+  <div class="kpi {% if scan.diff.counts.lastmod_mismatch %}warn{% endif %}">
+    <div class="k-label">lastmod 不一致</div>
+    <div class="k-value">{{ scan.diff.counts.lastmod_mismatch }}</div>
+    <div class="k-note">两处日期不同</div>
+  </div>
+  <div class="kpi {% if scan.failures.counts.values() | sum %}warn{% else %}ok{% endif %}">
+    <div class="k-label">失败合计</div>
+    <div class="k-value">{{ scan.failures.counts.values() | sum }}</div>
+    <div class="k-note">4xx / 5xx / 超时 / 外站 / 重复页</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <div class="segmented">
+      <button type="button" data-tab-target="tab-page" class="active">分页明细</button>
+      <button type="button" data-tab-target="tab-diff">三类差异</button>
+      <button type="button" data-tab-target="tab-fail">失败分类</button>
+      <button type="button" data-tab-target="tab-norm">URL 规范化对照</button>
+    </div>
+    <div class="panel-actions">
+      <span class="tag">抓取 {{ scan.pagination.pages_fetched }} 页</span>
+      <a class="btn secondary small" href="{{ csv_url }}">下载差异 CSV</a>
+    </div>
+  </div>
+  <div class="panel-body flush">
+    <div id="tab-page" class="tab-panel">
+      <div class="panel-body tight">
+        <p style="margin-top:0">
+          <strong>终止原因：</strong>{{ scan.pagination.reason }}；
+          <strong>停在第 {{ scan.pagination.stop_page }} 页</strong>，共抓取 {{ scan.pagination.pages_fetched }} 页。
+          {% if scan.policy == 'strict' %}
+          <span class="small muted">严格模式命中重复页即停，因此后续页未抓取；改用「完整核对」策略可继续抓完并看到空页终止。</span>
+          {% endif %}
+        </p>
+      </div>
+      <div class="table-wrap roomy">
+        <table class="dense">
+          <thead><tr><th class="num">页序</th><th>列表页 URL</th><th class="num">HTTP</th><th class="num">同站条目</th><th class="num">新增</th><th>判定</th></tr></thead>
+          <tbody>
+            {% for page in scan.pagination.pages %}
+            <tr>
+              <td class="num">{{ page.index }}</td>
+              <td class="small cell-ellipsis">{{ page.url }}</td>
+              <td class="num">{{ page.status }}</td>
+              <td class="num">{{ page.entries }}</td>
+              <td class="num">{{ page.new }}</td>
+              <td>
+                {% if page.duplicate %}<span class="tag warn">重复页</span>
+                {% elif page.entries == 0 %}<span class="tag err">空页</span>
+                {% elif page.index == scan.pagination.stop_page %}<span class="tag warn">终止页</span>
+                {% else %}<span class="tag ok">正常</span>{% endif %}
+                {% if page.note %}<div class="small muted">{{ page.note }}</div>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="panel-body tight">
+        <details class="help">
+          <summary>分页边界判定口径</summary>
+          <p class="small muted" style="margin-bottom:0">
+            从第 1 页顺序抓取，页码由页内分页条（<code>a[data-page]</code>）确定，不猜 URL；
+            终止条件为本页条目为 0（空页）、本页同站 URL 集合与上一页完全相同（重复页）或连续 2 页无新增。
+            严格模式命中重复页立即停止，完整核对则记录重复页后继续。
+          </p>
+        </details>
+      </div>
+    </div>
+
+    <div id="tab-diff" class="tab-panel" hidden>
+      <div class="panel-body tight">
+        <h3 style="margin-top:0">① 目录有、sitemap 缺（only_in_catalog）· {{ scan.diff.counts.only_in_catalog }} 条</h3>
+        {% if scan.diff.only_in_catalog %}
+        <div class="table-wrap auto">
+          <table class="dense">
+            <thead><tr><th>URL</th><th>目录标题</th><th>目录日期</th><th>所在页</th></tr></thead>
+            <tbody>
+              {% for row in scan.diff.only_in_catalog %}
+              <tr><td class="small">{{ row.url }}</td><td>{{ row.title }}</td><td>{{ row.lastmod }}</td><td>第 {{ row.page }} 页</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}<div class="empty"><strong>无</strong>目录条目全部被 sitemap 收录。</div>{% endif %}
+
+        <h3>② sitemap 多出、目录里没有（only_in_sitemap）· {{ scan.diff.counts.only_in_sitemap }} 条</h3>
+        {% if scan.diff.only_in_sitemap %}
+        <div class="table-wrap auto">
+          <table class="dense">
+            <thead><tr><th>URL</th><th>sitemap lastmod</th></tr></thead>
+            <tbody>
+              {% for row in scan.diff.only_in_sitemap %}
+              <tr><td class="small">{{ row.url }}</td><td>{{ row.lastmod or '未提供' }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}<div class="empty"><strong>无</strong>sitemap 没有目录之外的链接。</div>{% endif %}
+
+        <h3>③ lastmod 不一致（lastmod_mismatch）· {{ scan.diff.counts.lastmod_mismatch }} 条</h3>
+        {% if scan.diff.lastmod_mismatch %}
+        <div class="table-wrap auto">
+          <table class="dense">
+            <thead><tr><th>URL</th><th>目录日期</th><th>sitemap lastmod</th></tr></thead>
+            <tbody>
+              {% for row in scan.diff.lastmod_mismatch %}
+              <tr><td class="small">{{ row.url }}</td><td>{{ row.catalog_lastmod }}</td><td>{{ row.sitemap_lastmod }}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}<div class="empty"><strong>无</strong>两处日期一致。</div>{% endif %}
+
+        <details class="help" style="margin-top:10px">
+          <summary>三类差异怎么读 / 怎么修</summary>
+          <ul class="list small" style="margin-bottom:0">
+            <li><strong>only_in_catalog</strong>：目录里抓到但 sitemap 没有 → 运维在 sitemap 生成侧补条。</li>
+            <li><strong>only_in_sitemap</strong>：sitemap 有但目录里没有（可能已下架或列表漏挂）→ 编辑确认是否应保留。</li>
+            <li><strong>lastmod_mismatch</strong>：两处日期不同 → 以目录发布时间为准重生成 lastmod。</li>
+          </ul>
+        </details>
+      </div>
+    </div>
+
+    <div id="tab-fail" class="tab-panel" hidden>
+      <div class="panel-body tight">
+        <h3 style="margin-top:0">失败分类（{{ scan.failures.counts.values() | sum }} 条）</h3>
+        <div class="table-wrap auto">
+          <table class="dense">
+            <thead><tr><th>类别</th><th class="num">计数</th><th>示例 URL（至多 3 条）</th></tr></thead>
+            <tbody>
+              {% for category, count in scan.failures.counts.items() %}
+              <tr>
+                <td>{{ category }}</td>
+                <td class="num">{{ count }}</td>
+                <td class="small">
+                  {% for url in scan.failures.examples[category] %}<div>{{ url }}</div>{% endfor %}
+                  {% if count == 0 %}<span class="muted">无</span>
+                  {% elif count > scan.failures.examples[category]|length %}<span class="muted">…共 {{ count }} 条</span>{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <details class="help" style="margin-top:10px">
+          <summary>失败口径与修复建议</summary>
+          <p class="small muted" style="margin-bottom:0">
+            4xx/5xx/超时来自对目录详情 URL 的逐个访问（超时 5 秒、重试 1 次）；外站是被同站过滤剔除的链接；
+            重复页是命中重复判定的列表页。4xx 通常是详情页已删除但列表还挂着；外站链接应从列表模板里去掉；
+            重复页说明站点分页配置循环，需要编辑核对分页模板。
+          </p>
+        </details>
+      </div>
+    </div>
+
+    <div id="tab-norm" class="tab-panel" hidden>
+      <div class="panel-body tight">
+        <h3 style="margin-top:0">URL 规范化示例对照</h3>
+        {% if scan.normalization.examples %}
+        <div class="table-wrap auto">
+          <table class="dense">
+            <thead><tr><th>页</th><th>页面里的原始链接</th><th>规范化结果</th><th>依据</th></tr></thead>
+            <tbody>
+              {% for row in scan.normalization.examples %}
+              <tr>
+                <td>第 {{ row.page }} 页</td>
+                <td class="small"><code>{{ row.raw }}</code></td>
+                <td class="small"><code>{{ row.url }}</code></td>
+                <td class="small">{% for change in row.changes %}<span class="tag">{{ change }}</span> {% endfor %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}<div class="empty"><strong>无需规范化</strong>本次采集的链接已是规范形式。</div>{% endif %}
+        <details class="help" style="margin-top:10px">
+          <summary>规范化规则</summary>
+          <p class="small muted" style="margin-bottom:0">
+            去 fragment、去 utm/spm/from、query 键排序、相对转绝对、去默认端口、合并重复斜杠、去尾部斜杠；
+            不做二次编码，路径大小写敏感。规范化结果是对账的集合键，两侧都按同一规则归一后再比。
+          </p>
+        </details>
+      </div>
+    </div>
+  </div>
+  <div class="panel-actions">
+    <a class="btn small" href="{{ csv_url }}">下载差异 CSV</a>
+    <a class="btn secondary small" href="/review">查看历史扫描</a>
+    <a class="btn secondary small" href="/workbench?target={{ scan.target }}&amp;max_pages={{ scan.max_pages }}&amp;policy={% if scan.policy == 'strict' %}tolerant{% else %}strict{% endif %}">
+      用{% if scan.policy == 'strict' %}容忍{% else %}严格{% endif %}策略重跑
+    </a>
+    <span class="small muted" style="align-self:center">CSV 含三类差异与全部失败条目，可直接交给 sitemap 生成侧或运维排期修复。</span>
+  </div>
+</div>
+{% endblock %}
