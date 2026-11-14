@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>http://sample-site/list/detail-09.html</loc><lastmod>2026-02-01</lastmod></url>
+  <url><loc>http://sample-site/list/detail-10.html</loc><lastmod>2026-02-02</lastmod></url>
+  <url><loc>http://sample-site/list/detail-11.html</loc><lastmod>2026-02-03</lastmod></url>
+  <!-- detail-12 与 sitemap-a.xml 重复：lastmod 相同，裁决取读取顺序更早的 a 文件 -->
+  <url><loc>http://sample-site/list/detail-12.html</loc><lastmod>2026-02-20</lastmod></url>
+  <url><loc>http://sample-site/list/detail-13.html</loc><lastmod>2026-02-05</lastmod></url>
+  <url><loc>http://sample-site/list/detail-14.html</loc><lastmod>2026-02-06</lastmod></url>
+  <url><loc>http://sample-site/list/detail-15.html</loc><lastmod>2026-02-07</lastmod></url>
+  <url><loc>http://sample-site/list/detail-16.html</loc><lastmod>2026-02-08</lastmod></url>
+</urlset>

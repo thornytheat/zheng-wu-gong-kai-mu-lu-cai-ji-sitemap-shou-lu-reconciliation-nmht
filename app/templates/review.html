@@ -29,6 +29,7 @@
       <option value="">全部扫描</option>
       <option value="1">有差异</option>
       <option value="0">无差异</option>
+      <option value="pending">待核对（sitemap 读取不完整）</option>
     </select>
     <span class="spacer"></span>
     <span class="small muted" id="review-stat">共 {{ scans|length }} 条扫描</span>
@@ -39,12 +40,13 @@
       <thead>
         <tr>
           <th>扫描</th><th>目标站</th><th class="num">页数</th><th>终止</th><th class="num">目录</th>
+          <th>sitemap 读取</th>
           <th class="num">未收录</th><th class="num">多出</th><th class="num">日期不一致</th><th class="num">失败</th><th>更新时间</th><th>操作</th>
         </tr>
       </thead>
       <tbody>
       {% for row in scans %}
-        <tr data-key="{{ row.scan_key }}" data-policy="{{ row.policy }}" data-diff="{{ 1 if row.only_catalog_count + row.only_sitemap_count + row.mismatch_count else 0 }}">
+        <tr data-key="{{ row.scan_key }}" data-policy="{{ row.policy }}" data-diff="{{ 1 if row.only_catalog_count + row.only_sitemap_count + row.mismatch_count else 0 }}" data-complete="{{ 1 if row.sitemap_complete else 0 }}">
           <td><a href="/result/{{ row.scan_key }}"><code>{{ row.scan_key }}</code></a>
             <div class="small muted">{% if row.policy == 'strict' %}严格{% else %}完整核对{% endif %}
               {% if row.run_count > 1 %} · 跑过 {{ row.run_count }} 次{% endif %}</div>
@@ -53,6 +55,10 @@
           <td class="num">{{ row.pages_fetched }}</td>
           <td class="small">第 {{ row.stop_page }} 页 · {{ row.stop_reason }}</td>
           <td class="num">{{ row.catalog_count }}</td>
+          <td>
+            {% if row.sitemap_complete %}<span class="tag ok">完整 · {{ row.sitemap_count }} 条</span>
+            {% else %}<span class="tag warn">待核对 · 已读 {{ row.sitemap_count }} 条</span>{% endif %}
+          </td>
           <td class="num">{{ row.only_catalog_count }}</td>
           <td class="num">{{ row.only_sitemap_count }}</td>
           <td class="num">{{ row.mismatch_count }}</td>
@@ -64,13 +70,13 @@
           </td>
         </tr>
       {% else %}
-        <tr data-placeholder="1"><td colspan="11" class="muted">还没有扫描记录。先到 <a href="/workbench">采集工作台</a> 执行一次采集。</td></tr>
+        <tr data-placeholder="1"><td colspan="12" class="muted">还没有扫描记录。先到 <a href="/workbench">采集工作台</a> 执行一次采集。</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
   <div class="panel-actions">
-    <span class="small muted" style="align-self:center">共 {{ totals.scans }} 条扫描 · 差异 {{ totals.diff }} 条 · 失败 {{ totals.failures }} 条</span>
+    <span class="small muted" style="align-self:center">共 {{ totals.scans }} 条扫描 · 差异 {{ totals.diff }} 条 · 待核对 {{ totals.pending }} 条 · 失败 {{ totals.failures }} 条</span>
     <span class="small muted" style="align-self:center">旧记录保留可查：同组合重跑只更新计数（run_count 递增），不新增行。</span>
   </div>
 </section>
@@ -84,8 +90,9 @@
       </div>
       <div class="panel-body tight">
         <ul class="list small" style="margin-top:0">
-          <li><strong>结论怎么读</strong>：先看「结论」徽标。只要存在「目录有、sitemap 缺」或 lastmod 不一致，就判为存在收录缺口，需要运维在 sitemap 生成侧补条。</li>
+          <li><strong>结论怎么读</strong>：先看「结论」徽标。<strong>待核对</strong>表示有子 sitemap 超时/解析失败等，本次只展示待核对范围，不发布差异、不能判收录完整；全部文件读取成功后才会出现「收录完整/存在收录缺口」。</li>
           <li><strong>三类差异</strong>：only_in_catalog = 目录里抓到但 sitemap 没有；only_in_sitemap = sitemap 有但目录 6 页里没有（可能是已下架或列表漏挂）；lastmod_mismatch = 两处日期不同。</li>
+          <li><strong>多子文件 sitemap</strong>：sitemapindex 会递归读取全部子文件，逐文件登记成功/空文件/超时/HTTP失败/解析失败；同一链接出现在多个文件时按 lastmod 裁决，全部出处保留在结果页。</li>
           <li><strong>失败分类</strong>：4xx 通常是详情页已删除但列表还挂着；外站链接应从列表模板里去掉；重复页说明站点分页配置循环，需要编辑核对分页模板。</li>
           <li><strong>幂等</strong>：同一目标站 + 最大页数 + 策略重复执行时按 scan_key 就地更新，run_count 递增，不会产生重复扫描行。</li>
           <li><strong>CSV</strong>：含三类差异 + 全部失败条目，UTF-8 BOM，Excel 可直接打开。</li>
@@ -142,7 +149,8 @@
               <tr><th>目标站</th><td class="small">{{ latest_scan.target }}</td></tr>
               <tr><th>策略 / 页数</th><td>{% if latest_scan.policy == 'strict' %}严格{% else %}完整核对{% endif %} · 抓取 {{ latest_scan.pagination.pages_fetched }} 页</td></tr>
               <tr><th>终止</th><td class="small">第 {{ latest_scan.pagination.stop_page }} 页 · {{ latest_scan.pagination.reason }}</td></tr>
-              <tr><th>目录 / sitemap</th><td>{{ latest_scan.catalog.count }} / {{ latest_scan.sitemap.count }} 条</td></tr>
+              <tr><th>目录 / sitemap</th><td>{{ latest_scan.catalog.count }} / {{ latest_scan.sitemap.count }} 条（{{ latest_scan.sitemap.file_total }} 个文件）
+                {% if latest_scan.sitemap.complete %}<span class="tag ok">读取完整</span>{% else %}<span class="tag warn">读取不完整·待核对</span>{% endif %}</td></tr>
               <tr><th>未收录</th><td>{{ latest_scan.diff.counts.only_in_catalog }} 条</td></tr>
               <tr><th>sitemap 多出</th><td>{{ latest_scan.diff.counts.only_in_sitemap }} 条</td></tr>
               <tr><th>lastmod 不一致</th><td>{{ latest_scan.diff.counts.lastmod_mismatch }} 条</td></tr>

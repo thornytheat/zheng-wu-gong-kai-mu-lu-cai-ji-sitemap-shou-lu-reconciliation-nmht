@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS scans (
     pages_fetched INTEGER NOT NULL DEFAULT 0,
     catalog_count INTEGER NOT NULL DEFAULT 0,
     sitemap_count INTEGER NOT NULL DEFAULT 0,
+    sitemap_complete INTEGER NOT NULL DEFAULT 1,
     only_catalog_count INTEGER NOT NULL DEFAULT 0,
     only_sitemap_count INTEGER NOT NULL DEFAULT 0,
     mismatch_count INTEGER NOT NULL DEFAULT 0,
@@ -42,6 +43,11 @@ CREATE TABLE IF NOT EXISTS scans (
     result_json TEXT NOT NULL
 );
 """
+
+# 旧库增量列：键 = (列名, 列定义)，已存在则跳过
+_ADDED_COLUMNS = (
+    ("sitemap_complete", "INTEGER NOT NULL DEFAULT 1"),
+)
 
 
 def scan_key(target: str, max_pages: int, policy: str) -> str:
@@ -61,8 +67,18 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate_columns(conn)
     _seed_sites(conn)
     return conn
+
+
+def _migrate_columns(conn: sqlite3.Connection) -> None:
+    """给旧版 scans 表补新增列；新库建表时已包含，ALTER 会被跳过。"""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(scans)")}
+    for name, definition in _ADDED_COLUMNS:
+        if name not in existing:
+            conn.execute("ALTER TABLE scans ADD COLUMN %s %s" % (name, definition))
+    conn.commit()
 
 
 def _seed_sites(conn: sqlite3.Connection) -> None:
@@ -106,6 +122,7 @@ def save_scan(payload: dict) -> str:
     pagination = payload["pagination"]
     diff = payload["diff"]["counts"]
     failure_total = sum(payload["failures"]["counts"].values())
+    sitemap_complete = 1 if payload["sitemap"].get("complete", True) else 0
     with _connect() as conn:
         existing = conn.execute("SELECT created_at FROM scans WHERE scan_key=?", (key,)).fetchone()
         created = existing["created_at"] if existing else now
@@ -113,8 +130,9 @@ def save_scan(payload: dict) -> str:
             """
             INSERT INTO scans(scan_key, created_at, updated_at, run_count, target, max_pages, policy,
                               stop_reason, stop_page, pages_fetched, catalog_count, sitemap_count,
+                              sitemap_complete,
                               only_catalog_count, only_sitemap_count, mismatch_count, failure_count, result_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(scan_key) DO UPDATE SET
                 updated_at=excluded.updated_at,
                 run_count=scans.run_count + 1,
@@ -123,6 +141,7 @@ def save_scan(payload: dict) -> str:
                 pages_fetched=excluded.pages_fetched,
                 catalog_count=excluded.catalog_count,
                 sitemap_count=excluded.sitemap_count,
+                sitemap_complete=excluded.sitemap_complete,
                 only_catalog_count=excluded.only_catalog_count,
                 only_sitemap_count=excluded.only_sitemap_count,
                 mismatch_count=excluded.mismatch_count,
@@ -142,6 +161,7 @@ def save_scan(payload: dict) -> str:
                 int(pagination["pages_fetched"]),
                 diff["catalog"],
                 diff["sitemap"],
+                sitemap_complete,
                 diff["only_in_catalog"],
                 diff["only_in_sitemap"],
                 diff["lastmod_mismatch"],
@@ -176,7 +196,7 @@ def list_scans(limit: int = 50) -> list[dict]:
             """
             SELECT scan_key, created_at, updated_at, run_count, target, max_pages, policy,
                    stop_reason, stop_page, pages_fetched, catalog_count, sitemap_count,
-                   only_catalog_count, only_sitemap_count, mismatch_count, failure_count
+                   sitemap_complete, only_catalog_count, only_sitemap_count, mismatch_count, failure_count
             FROM scans ORDER BY updated_at DESC LIMIT ?
             """,
             (int(limit),),

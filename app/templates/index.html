@@ -130,7 +130,8 @@
               <td class="num">{{ row.pages_fetched }}</td>
               <td class="small">第 {{ row.stop_page }} 页 · {{ row.stop_reason }}</td>
               <td class="num">{{ row.catalog_count }}</td>
-              <td class="num">{{ row.only_catalog_count + row.only_sitemap_count + row.mismatch_count }}</td>
+              <td class="num">{% if row.sitemap_complete %}{{ row.only_catalog_count + row.only_sitemap_count + row.mismatch_count }}
+                {% else %}<span class="tag warn">待核对</span>{% endif %}</td>
               <td class="num">{{ row.failure_count }}</td>
               <td class="small muted nowrap">{{ row.updated_at }}</td>
             </tr>

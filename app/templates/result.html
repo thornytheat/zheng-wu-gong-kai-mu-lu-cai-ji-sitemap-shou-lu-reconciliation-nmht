@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}扫描结果 · {{ scan.target }}{% endblock %}
 {% block crumb %}扫描结果{% endblock %}
-{% block meta %}<span class="dot {% if scan.diff.counts.only_in_catalog or scan.diff.counts.lastmod_mismatch %}warn{% else %}ok{% endif %}"></span>
-{{ scan.diff.verdict }} · 目录 {{ scan.catalog.count }} 条 · sitemap {{ scan.sitemap.count }} 条{% endblock %}
+{% block meta %}<span class="dot {% if not scan.sitemap.complete %}warn{% elif scan.diff.counts.only_in_catalog or scan.diff.counts.lastmod_mismatch %}warn{% else %}ok{% endif %}"></span>
+{{ scan.diff.verdict }} · 目录 {{ scan.catalog.count }} 条 · sitemap 去重 {{ scan.sitemap.count }} 条 / {{ scan.sitemap.file_total }} 个文件{% endblock %}
 {% block actions %}
 <a class="btn small" href="{{ csv_url }}">下载差异 CSV</a>
 <a class="btn secondary small" href="/workbench?target={{ scan.target }}&amp;max_pages={{ scan.max_pages }}&amp;policy={% if scan.policy == 'strict' %}tolerant{% else %}strict{% endif %}">
@@ -20,7 +20,7 @@
   <div>
     <h1 class="page-title">扫描结果 · {{ scan.scan_id }}</h1>
     <p class="page-sub">
-      <strong>结论：</strong><span class="tag {% if scan.diff.counts.only_in_catalog or scan.diff.counts.lastmod_mismatch %}err{% else %}ok{% endif %}">{{ scan.diff.verdict }}</span>
+      <strong>结论：</strong><span class="tag {% if not scan.sitemap.complete %}warn{% elif scan.diff.counts.only_in_catalog or scan.diff.counts.lastmod_mismatch %}err{% else %}ok{% endif %}">{{ scan.diff.verdict }}</span>
       {{ scan.diff.conclusion }}
       <br>目标站 <code>{{ scan.target }}</code> · 最大页数 {{ scan.max_pages }} ·
       {% if scan.policy == 'strict' %}严格{% else %}完整核对{% endif %} · 生成于 {{ scan.generated_at }}
@@ -31,8 +31,16 @@
   </div>
 </div>
 
-{% if not scan.sitemap.available %}
-<div class="alert alert-error">sitemap 不可用：{{ scan.sitemap.error }}（本次只完成了目录采集与分页诊断）</div>
+{% if not scan.sitemap.complete %}
+<div class="alert alert-error">
+  <strong>sitemap 读取不完整，本次不发布差异、不能判为收录完整。</strong>
+  {{ scan.diff.conclusion }}
+  <div class="small" style="margin-top:6px">未成功的文件：
+    {% for f in scan.sitemap.files if f.status not in ['成功', '空文件'] %}
+    <span class="tag warn">{{ f.status }}</span> <code>{{ f.url }}</code>（{{ f.detail }}）{% if not loop.last %}；{% endif %}
+    {% endfor %}
+  </div>
+</div>
 {% endif %}
 
 <div class="kpi-strip">
@@ -42,9 +50,9 @@
     <div class="k-note">同站去重后的目录条目</div>
   </div>
   <div class="kpi">
-    <div class="k-label">sitemap 条目</div>
+    <div class="k-label">sitemap 去重条目</div>
     <div class="k-value">{{ scan.sitemap.count }}</div>
-    <div class="k-note">{% if scan.sitemap.available %}已解析 urlset{% else %}不可用{% endif %}</div>
+    <div class="k-note">{% if scan.sitemap.complete %}{{ scan.sitemap.file_total }} 个文件全部读取成功{% else %}读取不完整，仅已读部分{% endif %}</div>
   </div>
   <div class="kpi {% if scan.diff.counts.only_in_catalog %}err{% else %}ok{% endif %}">
     <div class="k-label">目录有、sitemap 缺</div>
@@ -72,7 +80,8 @@
   <div class="panel-head">
     <div class="segmented">
       <button type="button" data-tab-target="tab-page" class="active">分页明细</button>
-      <button type="button" data-tab-target="tab-diff">三类差异</button>
+      <button type="button" data-tab-target="tab-sitemap">sitemap 文件</button>
+      <button type="button" data-tab-target="tab-diff"{% if not scan.sitemap.complete %} disabled{% endif %}>三类差异</button>
       <button type="button" data-tab-target="tab-fail">失败分类</button>
       <button type="button" data-tab-target="tab-norm">URL 规范化对照</button>
     </div>
@@ -127,7 +136,106 @@
       </div>
     </div>
 
+    <div id="tab-sitemap" class="tab-panel" hidden>
+      <div class="panel-body tight">
+        <h3 style="margin-top:0">sitemap 读取汇总</h3>
+        <div class="table-wrap auto">
+          <table class="dense">
+            <tbody>
+              <tr><th style="width:220px">根 sitemap</th><td><code>{{ scan.sitemap.url }}</code></td></tr>
+              <tr><th>读取状态</th><td>
+                {% if scan.sitemap.complete %}<span class="tag ok">全部读取成功</span>
+                {% else %}<span class="tag err">读取不完整（待核对，不能判收录完整）</span>{% endif %}
+                {% for status, count in scan.sitemap.status_counts.items() %}
+                <span class="tag {% if status in ['成功', '空文件'] %}ok{% else %}err{% endif %}">{{ status }} × {{ count }}</span>
+                {% endfor %}
+              </td></tr>
+              <tr><th>文件数</th><td>{{ scan.sitemap.file_total }} 个（索引 {{ scan.sitemap.index_total }} 个、urlset {{ scan.sitemap.urlset_total }} 个）</td></tr>
+              <tr><th>条目对账</th><td>
+                各文件原始条目合计 <strong>{{ scan.sitemap.raw_entry_total }}</strong>
+                ＝ 去重后 sitemap 数 <strong>{{ scan.sitemap.count }}</strong>
+                ＋ 重复占用 {{ scan.sitemap.overlap_count }}；
+                其中同一链接出现在多个文件的有 <strong>{{ scan.sitemap.duplicate_total }}</strong> 条（按 lastmod 裁决）。
+                {% if scan.sitemap.arithmetic_ok %}<span class="tag ok">数目对得上</span>{% else %}<span class="tag err">数目对不上</span>{% endif %}
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>各文件明细（{{ scan.sitemap.file_total }} 个）</h3>
+        <div class="table-wrap roomy">
+          <table class="dense">
+            <thead><tr><th class="num">#</th><th>sitemap 文件 URL</th><th>类型</th><th>状态</th><th class="num">条目数</th><th>说明</th></tr></thead>
+            <tbody>
+              {% for f in scan.sitemap.files %}
+              <tr>
+                <td class="num">{{ loop.index }}</td>
+                <td class="small cell-ellipsis"><code>{{ f.url }}</code></td>
+                <td>{{ '索引' if f.kind == 'sitemapindex' else ('urlset' if f.kind == 'urlset' else '—') }}</td>
+                <td><span class="tag {% if f.status in ['成功', '空文件'] %}ok{% else %}err{% endif %}">{{ f.status }}</span></td>
+                <td class="num">{{ f.entry_count if f.kind == 'urlset' else (f.child_count if f.child_count is defined else '—') }}</td>
+                <td class="small muted">{{ f.detail }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {% if scan.sitemap.duplicate_urls %}
+        <h3>跨文件重复链接裁决（{{ scan.sitemap.duplicate_total }} 条）</h3>
+        <div class="table-wrap roomy">
+          <table class="dense">
+            <thead><tr><th>URL</th><th>胜出 lastmod</th><th>胜出文件</th><th>全部出处</th></tr></thead>
+            <tbody>
+              {% for dup in scan.sitemap.duplicate_urls %}
+              <tr>
+                <td class="small">{{ dup.url }}</td>
+                <td>{{ dup.chosen_lastmod or '未提供' }}</td>
+                <td class="small"><code>{{ dup.chosen_file }}</code></td>
+                <td class="small">
+                  {% for src in dup.sources %}
+                  <div>{% if src.selected %}<span class="tag ok">采用</span>{% else %}<span class="tag">出处</span>{% endif %}
+                    <code>{{ src.file }}</code> · lastmod {{ src.lastmod or '未提供' }}</div>
+                  {% endfor %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+
+        <details class="help" style="margin-top:10px">
+          <summary>状态与裁决口径</summary>
+          <ul class="list small" style="margin-bottom:0">
+            <li><strong>成功</strong>：抓取并解析通过；<strong>空文件</strong>：HTTP 200 但 urlset/索引内没有条目，算读取成功、零条参与合并。</li>
+            <li><strong>超时 / HTTP失败 / 抓取失败 / 解析失败</strong>：该文件未读完，整体判「读取不完整」，只展示待核对范围，不发布差异。</li>
+            <li>同一规范化 URL 出现在多个文件时按 lastmod 更新时间裁决（可解析日期优先于纯文本，空值最旧）；lastmod 相同取读取顺序更早的文件，全部出处均保留。</li>
+          </ul>
+        </details>
+      </div>
+    </div>
+
     <div id="tab-diff" class="tab-panel" hidden>
+      {% if not scan.sitemap.complete %}
+      <div class="panel-body tight">
+        <div class="alert alert-error" style="margin-top:0">
+          <strong>读取不完整，本次不发布最终差异。</strong>{{ scan.diff.conclusion }}
+        </div>
+        <h3 style="margin-top:0">待核对范围</h3>
+        <div class="table-wrap auto">
+          <table class="dense">
+            <thead><tr><th>范围</th><th class="num">数量</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>目录条目</td><td class="num">{{ scan.catalog.count }}</td><td>本次采集到的同站去重目录数，逐条都需与 sitemap 核对</td></tr>
+              <tr><td>已成功读取的 sitemap 文件</td><td class="num">{{ scan.sitemap.urlset_total }} 个 urlset / 去重 {{ scan.sitemap.count }} 条</td><td>仅已读部分，不能作为收录完整的依据</td></tr>
+              <tr><td>未成功读取的文件</td><td class="num">{{ scan.sitemap.file_total - scan.sitemap.status_counts.get('成功', 0) - scan.sitemap.status_counts.get('空文件', 0) }} 个</td><td>修复后重跑同一扫描即可补齐（幂等更新，不新增记录）</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small muted" style="margin-bottom:0">请先处理「sitemap 文件」页签中超时/失败的文件，再重跑本次扫描；在全部文件读取成功前，only_in_catalog / only_in_sitemap / lastmod_mismatch 一律不计数。</p>
+      </div>
+      {% else %}
       <div class="panel-body tight">
         <h3 style="margin-top:0">① 目录有、sitemap 缺（only_in_catalog）· {{ scan.diff.counts.only_in_catalog }} 条</h3>
         {% if scan.diff.only_in_catalog %}
@@ -180,6 +288,7 @@
           </ul>
         </details>
       </div>
+      {% endif %}
     </div>
 
     <div id="tab-fail" class="tab-panel" hidden>

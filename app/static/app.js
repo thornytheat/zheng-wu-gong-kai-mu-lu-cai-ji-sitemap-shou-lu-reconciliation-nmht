@@ -95,7 +95,7 @@
       var started = Date.now();
       var stage = 0;
       var labels = ['crawl', 'detail', 'sitemap', 'reconcile'];
-      var texts = ['顺序抓取列表页（同站过滤 + 分页边界判定）', '校验目录详情 URL（4xx/5xx/超时分类）', '抓取 sitemap.xml 并解析', '对账并落库'];
+      var texts = ['顺序抓取列表页（同站过滤 + 分页边界判定）', '校验目录详情 URL（4xx/5xx/超时分类）', '递归读取 sitemapindex 与全部子文件', '对账并落库'];
       var timer = setInterval(function () {
         stage = Math.min(stage + 1, labels.length - 1);
         markStep(labels[stage], 'active');
@@ -114,7 +114,8 @@
           ['抓取页数', s.pages_fetched],
           ['终止（第几页）', '第 ' + s.stop_page + ' 页'],
           ['目录条目', s.catalog_count],
-          ['sitemap 条目', s.sitemap_count],
+          ['sitemap 读取', s.sitemap_complete ? '完整（' + s.sitemap_files + ' 文件）' : '待核对（' + s.sitemap_files + ' 文件）'],
+          ['sitemap 去重条目', s.sitemap_count],
           ['未收录', s.only_in_catalog],
           ['多出', s.only_in_sitemap],
           ['lastmod 不一致', s.lastmod_mismatch],
@@ -193,9 +194,15 @@
     var shown = 0;
     rows.forEach(function (tr) {
       var text = tr.innerText.toLowerCase();
+      var matches;
+      if (wantDiff === 'pending') {
+        matches = tr.getAttribute('data-complete') === '0';
+      } else {
+        matches = !wantDiff || tr.getAttribute('data-diff') === wantDiff;
+      }
       var ok = (!term || text.indexOf(term) !== -1)
         && (!wantPolicy || tr.getAttribute('data-policy') === wantPolicy)
-        && (!wantDiff || tr.getAttribute('data-diff') === wantDiff);
+        && matches;
       tr.hidden = !ok;
       if (ok) shown += 1;
     });

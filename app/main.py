@@ -167,6 +167,7 @@ def review_page(request: Request):
         "scans": len(scans),
         "diff": sum(row["only_catalog_count"] + row["only_sitemap_count"] + row["mismatch_count"] for row in scans),
         "failures": sum(row["failure_count"] for row in scans),
+        "pending": sum(1 for row in scans if not row["sitemap_complete"]),
     }
     return _render(
         request,
